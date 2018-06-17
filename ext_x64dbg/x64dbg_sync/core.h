@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2012-2014, Quarkslab.
+Copyright (C) 2014-2015, Quarkslab.
 
 This file is part of qb-sync.
 
@@ -17,28 +17,25 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-extern BOOL g_Synchronized;
+#ifndef _CORE_H
+#define _CORE_H
 
-extern void dbgout(char *fmt, ...);
+#include "sync.h"
 
-extern void dbgoutW(wchar_t* fmt, ...);
 
-HRESULT TunnelIsUp();
+#define TIMER_PERIOD 100
+#define CONF_FILE "\\.sync"
 
-HRESULT TunnelCreate(PCSTR Host, PCSTR Port);
+//menu identifiers
+#define MENU_ENABLE_SYNC 0
+#define MENU_DISABLE_SYNC 1
 
-HRESULT TunnelClose();
 
-HRESULT TunnelPoll(int *lpNbBytesRecvd, LPSTR *lpBuffer);
+//functions
+HRESULT sync(PSTR Args);
+HRESULT syncoff();
+void coreInit(PLUG_INITSTRUCT* initStruct);
+void coreStop();
+void coreSetup();
 
-HRESULT TunnelReceive(int *lpNbBytesRecvd, LPSTR *lpBuffer);
-
-HRESULT TunnelSend(PCSTR Format, ...);
-
-HRESULT ToBase64(const BYTE *pbBinary, DWORD cbBinary, LPSTR *pszString);
-
-HRESULT FromBase64(LPSTR pszString, BYTE **ppbBinary);
-
-HRESULT WsaErrMsg(int LastError);
-
-HRESULT convert_tow(const char * mbstr,  PTCH *wcstr);
+#endif // _CORE_H

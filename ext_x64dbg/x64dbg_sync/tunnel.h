@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2012-2014, Quarkslab.
+Copyright (C) 2012-2015, Quarkslab.
 
 This file is part of qb-sync.
 
@@ -16,6 +16,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#ifndef _TUNNEL_H
+#define _TUNNEL_H
 
 extern BOOL g_Synchronized;
 
@@ -42,3 +45,6 @@ HRESULT FromBase64(LPSTR pszString, BYTE **ppbBinary);
 HRESULT WsaErrMsg(int LastError);
 
 HRESULT convert_tow(const char * mbstr,  PTCH *wcstr);
+
+
+#endif // _TUNNEL_H

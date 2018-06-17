@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2012-2014, Quarkslab.
+Copyright (C) 2012-2015, Quarkslab.
 
 This file is part of qb-sync.
 
@@ -53,7 +53,7 @@ CMD_BUFFER g_CmdBuffer;
 
 
 // Debuggee's state;
-ULONG64 g_Offset=NULL;
+ULONG64 g_Offset = NULL;
 ULONG64 g_Base = NULL;
 
 // Synchronisation mode
@@ -68,9 +68,9 @@ static CRITICAL_SECTION g_CritSectPollRelease;
 extern "C" HRESULT
 ExtQuery(PDEBUG_CLIENT4 Client)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
 
-    if (g_ExtClient!=NULL){
+    if (g_ExtClient != NULL){
         return S_OK;
     }
 
@@ -78,25 +78,25 @@ ExtQuery(PDEBUG_CLIENT4 Client)
         goto Fail;
     }
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] IDebugControl loaded\n");
-    #endif
+#endif
 
     if (FAILED(hRes = Client->QueryInterface(__uuidof(IDebugSymbols3), (void **)&g_ExtSymbols))){
         goto Fail;
     }
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] IDebugSymbols3 loaded\n");
-    #endif
+#endif
 
     if (FAILED(hRes = Client->QueryInterface(__uuidof(IDebugRegisters), (void **)&g_ExtRegisters))){
         goto Fail;
     }
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] IDebugRegisters loaded\n");
-    #endif
+#endif
 
     g_ExtClient = Client;
     return S_OK;
@@ -122,14 +122,15 @@ ExtRelease(void)
 HRESULT
 LoadConfigurationFile()
 {
-    DWORD count;
+    DWORD count = 0;
     HRESULT hRes = S_OK;
     HANDLE hFile;
-    CHAR lpProfile[MAX_PATH] = {0};
-    LPTSTR lpConfHost, lpConfPort;
+    CHAR lpProfile[MAX_PATH] = { 0 };
+    LPTSTR lpConfHost = NULL;
+    LPTSTR lpConfPort = NULL;
 
     count = GetEnvironmentVariable("userprofile", lpProfile, MAX_PATH);
-    if ((count == 0) | (count > MAX_PATH)){
+    if (count == 0 || count > MAX_PATH){
         return E_FAIL;
     }
 
@@ -144,16 +145,20 @@ LoadConfigurationFile()
     }
 
     CloseHandle(hFile);
-    lpConfHost = (LPTSTR) malloc(MAX_PATH);
-    lpConfPort = (LPTSTR) malloc(MAX_PATH);
 
-    count = GetPrivateProfileString ("INTERFACE", "host", "127.0.0.1", lpConfHost, MAX_PATH, lpProfile);
-    if ((count == NULL) | (count == (MAX_PATH-1)) | (count == (MAX_PATH-2))){
+    lpConfHost = (LPTSTR)malloc(MAX_PATH);
+    lpConfPort = (LPTSTR)malloc(MAX_PATH);
+    if (lpConfHost == NULL || lpConfPort == NULL){
         goto failed;
     }
 
-    count = GetPrivateProfileString ("INTERFACE", "port", "9100", lpConfPort, MAX_PATH, lpProfile);
-    if ((count == NULL) | (count == (MAX_PATH-1)) | (count == (MAX_PATH-2))){
+    count = GetPrivateProfileString("INTERFACE", "host", "127.0.0.1", lpConfHost, MAX_PATH, lpProfile);
+    if ((count == 0) || (count >= (MAX_PATH - 2))){
+        goto failed;
+    }
+
+    count = GetPrivateProfileString("INTERFACE", "port", "9100", lpConfPort, MAX_PATH, lpProfile);
+    if ((count == 0) || (count >= (MAX_PATH - 2))){
         goto failed;
     }
 
@@ -164,8 +169,8 @@ LoadConfigurationFile()
     return hRes;
 
 failed:
-    free(lpConfHost);
-    free(lpConfPort);
+    if (lpConfHost != NULL){ free(lpConfHost); }
+    if (lpConfPort != NULL){ free(lpConfPort); }
 
     return E_FAIL;
 }
@@ -177,29 +182,27 @@ UpdateState()
 {
     HRESULT hRes;
     ULONG64 PrevBase = g_Base;
-    ULONG NameSize=0;
+    ULONG NameSize = 0;
 
     /*
     msdn: GetInstructionOffset method returns the location of
     the current thread's current instruction.
     */
-    hRes=g_ExtRegisters->GetInstructionOffset(&g_Offset);
-    #if VERBOSE >= 2
-    if (SUCCEEDED(hRes)){
-        dprintf("[sync] GetInstructionOffset 0x%x\n", g_Offset);
+    hRes = g_ExtRegisters->GetInstructionOffset(&g_Offset);
+    if (FAILED(hRes)){
+        dprintf("[sync] failed to GetInstructionOffset\n");
+        return hRes;
     }
-    #endif
 
     /*
     msdn: GetModuleByOffset method searches through the target's modules for one
     whose memory allocation includes the specified location.
     */
-    hRes=g_ExtSymbols->GetModuleByOffset(g_Offset, 0, NULL, &g_Base);
-    #if VERBOSE >= 2
-    if (SUCCEEDED(hRes)){
-        dprintf("[sync] base address 0x%x\n", g_Base);
+    hRes = g_ExtSymbols->GetModuleByOffset(g_Offset, 0, NULL, &g_Base);
+    if (FAILED(hRes)){
+        dprintf("[sync] failed to GetModuleByOffset for offset: 0x%I64x\n", g_Offset);
+        return hRes;
     }
-    #endif
 
     // Check if we are in a new module
     if ((g_Base != PrevBase) & g_SyncAuto)
@@ -208,21 +211,23 @@ UpdateState()
         Update module name stored in g_NameBuffer
         msdn: GetModuleNameString  method returns the name of the specified module.
         */
-        hRes=g_ExtSymbols->GetModuleNameString(DEBUG_MODNAME_LOADED_IMAGE, DEBUG_ANY_ID, g_Base, g_NameBuffer, MAX_NAME, &NameSize);
-        if (SUCCEEDED(hRes) & (NameSize>0) & (((char) *g_NameBuffer)!=0))
-        {
-            #if VERBOSE >= 2
-            dprintf("[sync] DEBUG_MODNAME_LOADED_IMAGE: \"%s\"\n", g_NameBuffer);
-            #endif
+        hRes = g_ExtSymbols->GetModuleNameString(DEBUG_MODNAME_LOADED_IMAGE, DEBUG_ANY_ID, g_Base, g_NameBuffer, MAX_NAME, &NameSize);
+        if (SUCCEEDED(hRes)){
+            if ((NameSize > 0) & (((char)*g_NameBuffer) != 0))
+            {
+#if VERBOSE >= 2
+                dprintf("[sync] DEBUG_MODNAME_LOADED_IMAGE: \"%s\"\n", g_NameBuffer);
+#endif
 
-            hRes=TunnelSend("[notice]{\"type\":\"module\",\"path\":\"%s\"}\n", g_NameBuffer);
-            if (FAILED(hRes)){
-                return hRes;
+                hRes = TunnelSend("[notice]{\"type\":\"module\",\"path\":\"%s\"}\n", g_NameBuffer);
+                if (FAILED(hRes)){
+                    return hRes;
+                }
             }
         }
     }
 
-    hRes=TunnelSend("[sync]{\"type\":\"loc\",\"base\":%llu,\"offset\":%llu}\n", g_Base, g_Offset);
+    hRes = TunnelSend("[sync]{\"type\":\"loc\",\"base\":%llu,\"offset\":%llu}\n", g_Base, g_Offset);
     return hRes;
 }
 
@@ -231,7 +236,7 @@ HRESULT
 Identity(PSTR *Buffer)
 {
     HRESULT hRes;
-    ULONG IdentitySize=0;
+    ULONG IdentitySize = 0;
 
     hRes = g_ExtClient->GetIdentity(NULL, NULL, &IdentitySize);
     if (FAILED(hRes))
@@ -240,8 +245,8 @@ Identity(PSTR *Buffer)
         return hRes;
     }
 
-    *Buffer = (PSTR) malloc(IdentitySize+1);
-    if (Buffer==NULL)
+    *Buffer = (PSTR)malloc(IdentitySize + 1);
+    if (Buffer == NULL)
     {
         dprintf("[sync] Identity failed to allocate buffer: %d\n", GetLastError());
         return E_FAIL;
@@ -261,14 +266,14 @@ Identity(PSTR *Buffer)
 BOOL
 IsLocalDebuggee()
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     BOOL bLocal = FALSE;
     ULONG Class;
     ULONG Qualifier;
 
     hRes = g_ExtControl->GetDebuggeeType(&Class, &Qualifier);
     if (FAILED(hRes)){
-        return hRes;
+        return bLocal;
     }
 
     if ((Class == DEBUG_CLASS_USER_WINDOWS) & (Qualifier == DEBUG_USER_WINDOWS_PROCESS)){
@@ -287,33 +292,33 @@ IsLocalDebuggee()
 HRESULT
 PollCmd()
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     int NbBytesRecvd = 0;
     int ch = 0xA;
     char *msg, *next, *orig = NULL;
 
-    hRes=TunnelPoll(&NbBytesRecvd, &msg);
-    if (SUCCEEDED(hRes) & (NbBytesRecvd>0) & (msg != NULL))
+    hRes = TunnelPoll(&NbBytesRecvd, &msg);
+    if (SUCCEEDED(hRes) & (NbBytesRecvd > 0) & (msg != NULL))
     {
         next = orig = msg;
 
-        while ((msg-orig) < NbBytesRecvd)
+        while ((msg - orig) < NbBytesRecvd)
         {
             next = strchr(msg, ch);
-            if ( next != NULL){
+            if (next != NULL){
                 *next = 0;
             }
 
-            hRes=g_ExtControl->Execute(DEBUG_OUTCTL_ALL_CLIENTS, msg, DEBUG_EXECUTE_ECHO);
+            hRes = g_ExtControl->Execute(DEBUG_OUTCTL_ALL_CLIENTS, msg, DEBUG_EXECUTE_ECHO);
             if (FAILED(hRes))
                 dprintf("[sync] failed to execute received command\n", msg);
 
             // No more command
-            if ( next == NULL){
+            if (next == NULL){
                 break;
             }
 
-            msg = next+1;
+            msg = next + 1;
         }
 
         free(orig);
@@ -331,21 +336,24 @@ ReleasePollTimer()
 
     EnterCriticalSection(&g_CritSectPollRelease);
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] ReleasePollTimer called\n");
-    #endif
+#endif
 
-    if (!(g_hPollTimer==INVALID_HANDLE_VALUE))
+    if (!(g_hPollTimer == INVALID_HANDLE_VALUE))
     {
         ResetEvent(g_hPollCompleteEvent);
         bRes = DeleteTimerQueueTimer(NULL, g_hPollTimer, g_hPollCompleteEvent);
-        if (bRes==NULL)
+        if (bRes == NULL)
         {
             // msdn: If the error code is ERROR_IO_PENDING, it is not necessary to
             // call this function again. For any other error, you should retry the call.
             dwErr = GetLastError();
             if (dwErr != ERROR_IO_PENDING){
                 bRes = DeleteTimerQueueTimer(NULL, g_hPollTimer, g_hPollCompleteEvent);
+                if (!(bRes)){
+                    dprintf("[sync] failed to DeleteTimerQueueTimer\n");
+                }
             }
         }
 
@@ -381,7 +389,7 @@ CreatePollTimer()
     BOOL bRes;
 
     bRes = CreateTimerQueueTimer(&g_hPollTimer, NULL, (WAITORTIMERCALLBACK)PollTimerCb,
-                                 NULL, TIMER_PERIOD, TIMER_PERIOD, WT_EXECUTEINTIMERTHREAD);
+        NULL, TIMER_PERIOD, TIMER_PERIOD, WT_EXECUTEINTIMERTHREAD);
     if (!(bRes)){
         dprintf("[sync] failed to CreatePollTimer\n");
     }
@@ -395,14 +403,14 @@ CreatePollTimer()
 HRESULT
 EventFilterCb(BOOL *pbIgnoreEvent)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     ULONG Type, ProcessId, ThreadId, BreakpointId, ExtraInformationUsed, CommandSize;
     PDEBUG_BREAKPOINT Breakpoint;
     CHAR *LastCommand;
 
     // msdn: Returns information about the last event that occurred in a target.
     hRes = g_ExtControl->GetLastEventInformation(&Type, &ProcessId, &ThreadId, &BreakpointId, sizeof(ULONG),
-                                                 &ExtraInformationUsed, NULL, NULL, NULL);
+        &ExtraInformationUsed, NULL, NULL, NULL);
 
     if (FAILED(hRes)){
         goto Exit;
@@ -462,21 +470,21 @@ HRESULT
 CALLBACK
 DebugExtensionInitialize(PULONG Version, PULONG Flags)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     IDebugClient *DebugClient;
     PDEBUG_CONTROL DebugControl;
 
     *Version = DEBUG_EXTENSION_VERSION(EXT_MAJOR_VER, EXT_MINOR_VER);
     *Flags = 0;
 
-    if (FAILED(hRes=DebugCreate(__uuidof(IDebugClient), (void **)&DebugClient))){
+    if (FAILED(hRes = DebugCreate(__uuidof(IDebugClient), (void **)&DebugClient))){
         return hRes;
     }
 
-    if (SUCCEEDED(hRes=DebugClient->QueryInterface(__uuidof(IDebugControl),  (void **)&DebugControl)))
+    if (SUCCEEDED(hRes = DebugClient->QueryInterface(__uuidof(IDebugControl), (void **)&DebugControl)))
     {
         // Get the windbg-style extension APIS
-        ExtensionApis.nSize = sizeof (ExtensionApis);
+        ExtensionApis.nSize = sizeof(ExtensionApis);
         hRes = DebugControl->GetWindbgExtensionApis64(&ExtensionApis);
         DebugControl->Release();
         dprintf("[sync] DebugExtensionInitialize, ExtensionApis loaded\n");
@@ -485,6 +493,7 @@ DebugExtensionInitialize(PULONG Version, PULONG Flags)
     DebugClient->Release();
     g_ExtClient = NULL;
     g_Synchronized = FALSE;
+    g_hPollTimer = INVALID_HANDLE_VALUE;
 
     g_hPollCompleteEvent = CreateEvent(NULL, true, false, NULL);
     if (g_hPollCompleteEvent == NULL)
@@ -510,50 +519,50 @@ CALLBACK
 DebugExtensionNotify(ULONG Notify, ULONG64 Argument)
 {
     UNREFERENCED_PARAMETER(Argument);
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     BOOL bIgnoreEvent = false;
 
-    switch(Notify){
-        case DEBUG_NOTIFY_SESSION_ACTIVE:
-            #if VERBOSE >= 2
-            dprintf("[sync] DebugExtensionNotify: A debugging session is active. The session may not necessarily be suspended.\n");
-            #endif
-            break;
+    switch (Notify){
+    case DEBUG_NOTIFY_SESSION_ACTIVE:
+#if VERBOSE >= 2
+        dprintf("[sync] DebugExtensionNotify: A debugging session is active. The session may not necessarily be suspended.\n");
+#endif
+        break;
 
-        case DEBUG_NOTIFY_SESSION_INACTIVE:
-            #if VERBOSE >= 2
-            dprintf("[sync] DebugExtensionNotify: No debugging session is active.\n");
-            #endif
-            break;
+    case DEBUG_NOTIFY_SESSION_INACTIVE:
+#if VERBOSE >= 2
+        dprintf("[sync] DebugExtensionNotify: No debugging session is active.\n");
+#endif
+        break;
 
-        case DEBUG_NOTIFY_SESSION_ACCESSIBLE:
-            #if VERBOSE >= 2
-            dprintf("[sync] DebugExtensionNotify: The debugging session has suspended and is now accessible.\n");
-            #endif
-            if (SUCCEEDED(TunnelIsUp()))
-            {
-                hRes = EventFilterCb(&bIgnoreEvent);
-                if (SUCCEEDED(hRes) && bIgnoreEvent){
-                    break;
-                }
-
-                UpdateState();
-                CreatePollTimer();
+    case DEBUG_NOTIFY_SESSION_ACCESSIBLE:
+#if VERBOSE >= 2
+        dprintf("[sync] DebugExtensionNotify: The debugging session has suspended and is now accessible.\n");
+#endif
+        if (SUCCEEDED(TunnelIsUp()))
+        {
+            hRes = EventFilterCb(&bIgnoreEvent);
+            if (SUCCEEDED(hRes) && bIgnoreEvent){
+                break;
             }
-            break;
 
-        case DEBUG_NOTIFY_SESSION_INACCESSIBLE:
-            #if VERBOSE >= 2
-            dprintf("[sync] DebugExtensionNotify: The debugging session has started running and is now inaccessible.\n");
-            #endif
-            ReleasePollTimer();
-            break;
+            UpdateState();
+            CreatePollTimer();
+        }
+        break;
 
-        default:
-            #if VERBOSE >= 2
-            dprintf("[sync] DebugExtensionNotify: Unknown Notify reason (%x).\n", Notify);
-            #endif
-            break;
+    case DEBUG_NOTIFY_SESSION_INACCESSIBLE:
+#if VERBOSE >= 2
+        dprintf("[sync] DebugExtensionNotify: The debugging session has started running and is now inaccessible.\n");
+#endif
+        ReleasePollTimer();
+        break;
+
+    default:
+#if VERBOSE >= 2
+        dprintf("[sync] DebugExtensionNotify: Unknown Notify reason (%x).\n", Notify);
+#endif
+        break;
     }
 
     return;
@@ -586,9 +595,9 @@ HRESULT
 CALLBACK
 sync(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     PCSTR Host;
-    PSTR pszId=NULL;
+    PSTR pszId = NULL;
 
     INIT_API();
 
@@ -596,52 +605,52 @@ sync(PDEBUG_CLIENT4 Client, PCSTR Args)
     g_Base = NULL;
     g_Offset = NULL;
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] sync function called\n");
-    #endif
+#endif
 
     if (g_Synchronized)
     {
         dprintf("[sync] sync update\n");
         UpdateState();
-        goto exit;
+        goto Exit;
     }
 
     if (!Args || !*Args) {
         dprintf("[sync] No argument found, using default host (%s:%s)\n", g_DefaultHost, g_DefaultPort);
-        Host=g_DefaultHost;
-    }else{
-        Host=Args;
+        Host = g_DefaultHost;
+    }
+    else{
+        Host = Args;
     }
 
-    if (FAILED(hRes=TunnelCreate(Host, g_DefaultPort)))
+    if (FAILED(hRes = TunnelCreate(Host, g_DefaultPort)))
     {
         dprintf("[sync] sync failed\n");
-        goto exit;
+        goto Exit;
     }
 
     dprintf("[sync] probing sync\n");
 
-    if (FAILED(hRes=Identity(&pszId)))
+    if (FAILED(hRes = Identity(&pszId)))
     {
         dprintf("[sync] get identity failed\n");
-        goto exit;
+        goto Exit;
     }
 
-    hRes=TunnelSend("[notice]{\"type\":\"new_dbg\",\"msg\":\"dbg connect - %s\"}\n", pszId);
-    if (SUCCEEDED(hRes))
-    {
-        dprintf("[sync] sync is now enabled with host %s\n", Host);
-        UpdateState();
-        CreatePollTimer();
-    }
-    else
+    hRes = TunnelSend("[notice]{\"type\":\"new_dbg\",\"msg\":\"dbg connect - %s\",\"dialect\":\"windbg\"}\n", pszId);
+    if (FAILED(hRes))
     {
         dprintf("[sync] sync aborted\n");
+        goto Exit;
     }
 
-exit:
-    if (!(pszId==NULL)){
+    dprintf("[sync] sync is now enabled with host %s\n", Host);
+    UpdateState();
+    CreatePollTimer();
+
+Exit:
+    if (!(pszId == NULL)){
         free(pszId);
     }
 
@@ -653,20 +662,20 @@ HRESULT
 CALLBACK
 syncoff(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     UNREFERENCED_PARAMETER(Args);
     INIT_API();
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !syncoff  command called\n");
-    #endif
+#endif
 
     if (!g_Synchronized){
         return hRes;
     }
 
     ReleasePollTimer();
-    hRes=TunnelClose();
+    hRes = TunnelClose();
     dprintf("[sync] sync is now disabled\n");
 
     return hRes;
@@ -677,24 +686,24 @@ HRESULT
 CALLBACK
 syncmodauto(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     char * msg;
     INIT_API();
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !syncmodauto called\n");
-    #endif
+#endif
 
     if (!Args || !*Args){
         goto syncmod_arg_fail;
     }
 
-    if (strcmp("on", Args)==0)
+    if (strcmp("on", Args) == 0)
     {
         msg = (char *)Args;
         g_SyncAuto = true;
     }
-    else if (strcmp("off", Args)==0)
+    else if (strcmp("off", Args) == 0)
     {
         msg = (char *)Args;
         g_SyncAuto = false;
@@ -703,7 +712,7 @@ syncmodauto(PDEBUG_CLIENT4 Client, PCSTR Args)
         goto syncmod_arg_fail;
     }
 
-    hRes=TunnelSend("[notice]{\"type\":\"sync_mode\",\"auto\":\"%s\"}\n", msg);
+    hRes = TunnelSend("[notice]{\"type\":\"sync_mode\",\"auto\":\"%s\"}\n", msg);
     return hRes;
 
 syncmod_arg_fail:
@@ -717,30 +726,30 @@ HRESULT
 CALLBACK
 cmd(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     ULONG Flags;
     PDEBUG_OUTPUT_CALLBACKS Callbacks;
     INIT_API();
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !cmd command called\n");
-    #endif
+#endif
 
     if (!Args || !*Args) {
         dprintf("[sync] !cmd <command to execute and dump>\n");
         return E_FAIL;
     }
 
-    if (FAILED(hRes=g_ExtClient->GetOutputCallbacks(&Callbacks)))
+    if (FAILED(hRes = g_ExtClient->GetOutputCallbacks(&Callbacks)))
     {
         dprintf("[sync] GetOutputCallbacks failed\n");
-        goto exit;
+        goto Exit;
     }
 
-    if (FAILED(hRes=g_ExtClient->SetOutputCallbacks(&g_OutputCb)))
+    if (FAILED(hRes = g_ExtClient->SetOutputCallbacks(&g_OutputCb)))
     {
         dprintf("[sync] SetOutputCallbacks failed\n");
-        goto exit;
+        goto Exit;
     }
 
     // msdn: Execute method executes the specified debugger commands.
@@ -750,16 +759,16 @@ cmd(PDEBUG_CLIENT4 Client, PCSTR Args)
         Flags = DEBUG_EXECUTE_NOT_LOGGED;
     }
 
-    hRes=g_ExtControl->Execute(DEBUG_OUTCTL_ALL_CLIENTS, Args, Flags);
+    hRes = g_ExtControl->Execute(DEBUG_OUTCTL_ALL_CLIENTS, Args, Flags);
 
     g_ExtClient->FlushCallbacks();
     g_ExtClient->SetOutputCallbacks(Callbacks);
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] OutputCallbacks removed\n");
-    #endif
+#endif
 
-exit:
+Exit:
     return hRes;
 }
 
@@ -768,7 +777,7 @@ exit:
 HRESULT
 LocalCmd(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     g_CmdBuffer.len = 0;
     ZeroMemory(g_CmdBuffer.buffer, MAX_CMD);
 
@@ -784,17 +793,17 @@ LocalCmd(PDEBUG_CLIENT4 Client, PCSTR Args)
 HRESULT
 ExecCmdList(PCSTR cmd)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     ULONG Status;
     char *ptr, *end;
 
     ptr = (char *)cmd;
-    end = ptr+strlen(cmd);
+    end = ptr + strlen(cmd);
 
     while (cmd < end)
     {
-        ptr = (char *) strchr(cmd, 0x0a);
-        if ( ptr != NULL){
+        ptr = (char *)strchr(cmd, 0x0a);
+        if (ptr != NULL){
             *ptr = 0;
         }
         else{
@@ -802,20 +811,20 @@ ExecCmdList(PCSTR cmd)
         }
 
         // msdn: Executes the specified debugger commands.
-        hRes=g_ExtControl->Execute(DEBUG_OUTCTL_ALL_CLIENTS, cmd, DEBUG_EXECUTE_ECHO|DEBUG_EXECUTE_NO_REPEAT);
+        hRes = g_ExtControl->Execute(DEBUG_OUTCTL_ALL_CLIENTS, cmd, DEBUG_EXECUTE_ECHO | DEBUG_EXECUTE_NO_REPEAT);
 
         // msdn: Describes the nature of the current target.
-        hRes=g_ExtControl->GetExecutionStatus(&Status);
+        hRes = g_ExtControl->GetExecutionStatus(&Status);
         if (FAILED(hRes)){
             break;
         }
 
         // Drop commands if the target is not paused
-        if (!(Status==DEBUG_STATUS_BREAK)){
+        if (!(Status == DEBUG_STATUS_BREAK)){
             break;
         }
 
-        cmd= ptr+1;
+        cmd = ptr + 1;
     }
 
     return hRes;
@@ -826,19 +835,19 @@ HRESULT
 CALLBACK
 cmt(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     INIT_API();
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !cmt called\n");
-    #endif
+#endif
 
     if (!Args || !*Args) {
         dprintf("[sync] !cmt <comment to add>\n");
         return E_FAIL;
     }
 
-    hRes=TunnelSend("[sync]{\"type\":\"cmt\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", Args, g_Base, g_Offset);
+    hRes = TunnelSend("[sync]{\"type\":\"cmt\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", Args, g_Base, g_Offset);
 
     return hRes;
 }
@@ -848,18 +857,18 @@ HRESULT
 CALLBACK
 rcmt(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     INIT_API();
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !rcmt called\n");
-    #endif
+#endif
 
     if (!Args || !*Args) {
         Args = "";
     }
 
-    hRes=TunnelSend("[sync]{\"type\":\"rcmt\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", Args, g_Base, g_Offset);
+    hRes = TunnelSend("[sync]{\"type\":\"rcmt\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", Args, g_Base, g_Offset);
 
     return hRes;
 }
@@ -869,18 +878,18 @@ HRESULT
 CALLBACK
 fcmt(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     INIT_API();
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !fcmt called\n");
-    #endif
+#endif
 
     if (!Args || !*Args) {
         Args = "";
     }
 
-    hRes=TunnelSend("[sync]{\"type\":\"fcmt\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", Args, g_Base, g_Offset);
+    hRes = TunnelSend("[sync]{\"type\":\"fcmt\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", Args, g_Base, g_Offset);
 
     return hRes;
 }
@@ -890,19 +899,19 @@ HRESULT
 CALLBACK
 lbl(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     INIT_API();
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !lbl called\n");
-    #endif
+#endif
 
     if (!Args || !*Args) {
         dprintf("[sync] !lbl <comment to add>\n");
         return E_FAIL;
     }
 
-    hRes=TunnelSend("[sync]{\"type\":\"lbl\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", Args, g_Base, g_Offset);
+    hRes = TunnelSend("[sync]{\"type\":\"lbl\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", Args, g_Base, g_Offset);
 
     return hRes;
 }
@@ -912,17 +921,17 @@ HRESULT
 CALLBACK
 bc(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     ULONG DwRGB = 0;
     ULONG RemainderIndex;
     DEBUG_VALUE DebugValue = {};
     char * msg;
-    char * rgb_msg[64] = {0};
+    char * rgb_msg[64] = { 0 };
     INIT_API();
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !bc called\n");
-    #endif
+#endif
 
     if (!Args || !*Args)
     {
@@ -939,8 +948,8 @@ bc(PDEBUG_CLIENT4 Client, PCSTR Args)
 
     else if (strncmp("set ", Args, 4) == 0)
     {
-        *((char *)Args+3) = 0;
-        hRes=g_ExtControl->Evaluate((char *) (Args+4), DEBUG_VALUE_INT32, &DebugValue, &RemainderIndex);
+        *((char *)Args + 3) = 0;
+        hRes = g_ExtControl->Evaluate((char *)(Args + 4), DEBUG_VALUE_INT32, &DebugValue, &RemainderIndex);
         if (FAILED(hRes))
         {
             dprintf("[sync] failed to evaluate RGB code\n");
@@ -948,7 +957,7 @@ bc(PDEBUG_CLIENT4 Client, PCSTR Args)
         }
 
         DwRGB = (ULONG)DebugValue.I32;
-        _snprintf_s((char *) rgb_msg, 64, _TRUNCATE , "%s\", \"rgb\":%lu, \"reserved\":\"", Args, DwRGB);
+        _snprintf_s((char *)rgb_msg, 64, _TRUNCATE, "%s\", \"rgb\":%lu, \"reserved\":\"", Args, DwRGB);
         msg = (char *)rgb_msg;
     }
     else
@@ -957,7 +966,7 @@ bc(PDEBUG_CLIENT4 Client, PCSTR Args)
         return E_FAIL;
     }
 
-    hRes=TunnelSend("[sync]{\"type\":\"bc\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", msg, g_Base, g_Offset);
+    hRes = TunnelSend("[notice]{\"type\":\"bc\",\"msg\":\"%s\",\"base\":%llu,\"offset\":%llu}\n", msg, g_Base, g_Offset);
     return hRes;
 }
 
@@ -966,25 +975,25 @@ HRESULT
 CALLBACK
 idblist(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     UNREFERENCED_PARAMETER(Args);
     INIT_API();
 
     int NbBytesRecvd;
     char * msg = NULL;
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !idblist called\n");
-    #endif
+#endif
 
-    hRes=TunnelSend("[notice]{\"type\":\"idb_list\"}\n");
+    hRes = TunnelSend("[notice]{\"type\":\"idb_list\"}\n");
     if (FAILED(hRes)){
         dprintf("[sync] !idblist failed\n");
         return hRes;
     }
 
-    hRes=TunnelReceive(&NbBytesRecvd, &msg);
-    if (SUCCEEDED(hRes) & (NbBytesRecvd>0) & (msg != NULL)){
+    hRes = TunnelReceive(&NbBytesRecvd, &msg);
+    if (SUCCEEDED(hRes) & (NbBytesRecvd > 0) & (msg != NULL)){
         dprintf("%s\n", msg);
         free(msg);
     }
@@ -997,7 +1006,7 @@ HRESULT
 CALLBACK
 idbn(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     int NbBytesRecvd;
     char * msg = NULL;
     INIT_API();
@@ -1007,18 +1016,18 @@ idbn(PDEBUG_CLIENT4 Client, PCSTR Args)
         return E_FAIL;
     }
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !idbn called\n");
-    #endif
+#endif
 
-    hRes=TunnelSend("[notice]{\"type\":\"idb_n\",\"idb\":\"%s\"}\n", Args);
+    hRes = TunnelSend("[notice]{\"type\":\"idb_n\",\"idb\":\"%s\"}\n", Args);
     if (FAILED(hRes)){
         dprintf("[sync] !idblist failed\n");
         return hRes;
     }
 
-    hRes=TunnelReceive(&NbBytesRecvd, &msg);
-    if (SUCCEEDED(hRes) & (NbBytesRecvd>0) & (msg != NULL)){
+    hRes = TunnelReceive(&NbBytesRecvd, &msg);
+    if (SUCCEEDED(hRes) & (NbBytesRecvd > 0) & (msg != NULL)){
         dprintf("%s\n", msg);
         free(msg);
     }
@@ -1032,8 +1041,8 @@ CALLBACK
 jmpto(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
     HRESULT hRes;
-    ULONG64 Base, Offset =0;
-    ULONG NameSize=0;
+    ULONG64 Base, Offset = 0;
+    ULONG NameSize = 0;
     ULONG RemainderIndex;
     DEBUG_VALUE DebugValue = {};
     INIT_API();
@@ -1047,7 +1056,7 @@ jmpto(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: Evaluate method evaluates an expression, returning the result.
     */
-    hRes=g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
+    hRes = g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
     if (FAILED(hRes))
     {
         dprintf("[sync] jumpto: failed to evaluate expression\n");
@@ -1060,10 +1069,10 @@ jmpto(PDEBUG_CLIENT4 Client, PCSTR Args)
     msdn: GetModuleByOffset method searches through the target's modules for one
     whose memory allocation includes the specified location.
     */
-    hRes=g_ExtSymbols->GetModuleByOffset(Offset, 0, NULL, &Base);
+    hRes = g_ExtSymbols->GetModuleByOffset(Offset, 0, NULL, &Base);
     if (FAILED(hRes))
     {
-        dprintf("[sync] jumpto: failed to get module base for address 0x%x\n", Base);
+        dprintf("[sync] jumpto: failed to get module base for address 0x%x\n", Offset);
         return E_FAIL;
     }
 
@@ -1071,10 +1080,14 @@ jmpto(PDEBUG_CLIENT4 Client, PCSTR Args)
     Update module name stored in g_NameBuffer
     msdn: GetModuleNameString  method returns the name of the specified module.
     */
-    hRes=g_ExtSymbols->GetModuleNameString(DEBUG_MODNAME_LOADED_IMAGE, DEBUG_ANY_ID, Base, g_NameBuffer, MAX_NAME, &NameSize);
-    if (!(SUCCEEDED(hRes) & (NameSize>0) & (((char) *g_NameBuffer)!=0)))
-    {
+    hRes = g_ExtSymbols->GetModuleNameString(DEBUG_MODNAME_LOADED_IMAGE, DEBUG_ANY_ID, Base, g_NameBuffer, MAX_NAME, &NameSize);
+    if (FAILED(hRes)){
         dprintf("[sync] jumpto: failed to get module name for target address\n");
+        return E_FAIL;
+    }
+
+    if ((NameSize == 0) | (((char)*g_NameBuffer) == 0)){
+        dprintf("[sync] jumpto: null module name for target address\n");
         return E_FAIL;
     }
 
@@ -1084,12 +1097,13 @@ jmpto(PDEBUG_CLIENT4 Client, PCSTR Args)
         // Update base address of current active module
         g_Base = Base;
 
-        hRes=TunnelSend("[notice]{\"type\":\"module\",\"path\":\"%s\"}\n", g_NameBuffer);
-        if (FAILED(hRes))
+        hRes = TunnelSend("[notice]{\"type\":\"module\",\"path\":\"%s\"}\n", g_NameBuffer);
+        if (FAILED(hRes)){
             return hRes;
+        }
     }
 
-    hRes=TunnelSend("[sync]{\"type\":\"loc\",\"base\":%llu,\"offset\":%llu}\n", Base, Offset);
+    hRes = TunnelSend("[sync]{\"type\":\"loc\",\"base\":%llu,\"offset\":%llu}\n", Base, Offset);
 
     return hRes;
 }
@@ -1100,7 +1114,7 @@ CALLBACK
 raddr(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
     HRESULT hRes;
-    ULONG64 Base, Offset =0;
+    ULONG64 Base, Offset = 0;
     ULONG RemainderIndex;
     DEBUG_VALUE DebugValue = {};
     INIT_API();
@@ -1114,7 +1128,7 @@ raddr(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: Evaluate method evaluates an expression, returning the result.
     */
-    hRes=g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
+    hRes = g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
     if (FAILED(hRes))
     {
         dprintf("[sync] rebaseaddr: failed to evaluate expression\n");
@@ -1127,14 +1141,14 @@ raddr(PDEBUG_CLIENT4 Client, PCSTR Args)
     msdn: GetModuleByOffset method searches through the target's modules for one
     whose memory allocation includes the specified location.
     */
-    hRes=g_ExtSymbols->GetModuleByOffset(Offset, 0, NULL, &Base);
+    hRes = g_ExtSymbols->GetModuleByOffset(Offset, 0, NULL, &Base);
     if (FAILED(hRes))
     {
-        dprintf("[sync] rebaseaddr: failed to get module base for address 0x%x\n", Base);
+        dprintf("[sync] rebaseaddr: failed to get module base for address 0x%x\n", Offset);
         return E_FAIL;
     }
 
-    hRes=TunnelSend("[sync]{\"type\":\"raddr\",\"raddr\":%llu,\"rbase\":%llu,\"base\":%llu,\"offset\":%llu}\n",
+    hRes = TunnelSend("[sync]{\"type\":\"raddr\",\"raddr\":%llu,\"rbase\":%llu,\"base\":%llu,\"offset\":%llu}\n",
         Offset, Base, g_Base, g_Offset);
 
     return hRes;
@@ -1146,7 +1160,7 @@ CALLBACK
 rln(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
     HRESULT hRes;
-    ULONG64 Base, Offset =0;
+    ULONG64 Base, Offset = 0;
     ULONG RemainderIndex;
     DEBUG_VALUE DebugValue = {};
     char *msg = NULL;
@@ -1162,7 +1176,7 @@ rln(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: Evaluate method evaluates an expression, returning the result.
     */
-    hRes=g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
+    hRes = g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
     if (FAILED(hRes))
     {
         dprintf("[sync] rebaseaddr: failed to evaluate expression\n");
@@ -1175,34 +1189,39 @@ rln(PDEBUG_CLIENT4 Client, PCSTR Args)
     msdn: GetModuleByOffset method searches through the target's modules for one
     whose memory allocation includes the specified location.
     */
-    hRes=g_ExtSymbols->GetModuleByOffset(Offset, 0, NULL, &Base);
+    hRes = g_ExtSymbols->GetModuleByOffset(Offset, 0, NULL, &Base);
     if (FAILED(hRes))
     {
-        dprintf("[sync] rebaseaddr: failed to get module base for address 0x%x\n", Base);
+        dprintf("[sync] rebaseaddr: failed to get module base for address 0x%x\n", Offset);
         return E_FAIL;
     }
 
     // First disable tunnel polling for commands (happy race...)
     ReleasePollTimer();
 
-    hRes=TunnelSend("[sync]{\"type\":\"rln\",\"raddr\":%llu,\"rbase\":%llu,\"base\":%llu,\"offset\":%llu}\n",
+    hRes = TunnelSend("[sync]{\"type\":\"rln\",\"raddr\":%llu,\"rbase\":%llu,\"base\":%llu,\"offset\":%llu}\n",
         Offset, Base, g_Base, g_Offset);
 
     // Let time for the IDB client to reply if it exists
     Sleep(150);
 
     // Poll tunnel
-    hRes=TunnelPoll(&NbBytesRecvd, &msg);
+    hRes = TunnelPoll(&NbBytesRecvd, &msg);
     if (FAILED(hRes))
     {
         dprintf("[sync] rln poll failed\n");
         goto Exit;
     }
 
-    if ((NbBytesRecvd==0) | (msg == NULL))
+    if ((NbBytesRecvd == 0) | (msg == NULL))
     {
         dprintf("    -> no reply\n");
         goto Exit;
+    }
+
+    if (isspace(msg[NbBytesRecvd-1]))
+    {
+        msg[NbBytesRecvd-1] = 0;
     }
 
     dprintf("%s\n", msg);
@@ -1210,7 +1229,7 @@ rln(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: The AddSyntheticSymbol method adds a synthetic symbol to a module in the current process.
     */
-    hRes=g_ExtSymbols->AddSyntheticSymbol(Offset, 1, msg, DEBUG_ADDSYNTHSYM_DEFAULT, NULL);
+    hRes = g_ExtSymbols->AddSyntheticSymbol(Offset, 1, msg, DEBUG_ADDSYNTHSYM_DEFAULT, NULL);
     if (FAILED(hRes))
     {
         // symbol may already exists
@@ -1238,7 +1257,7 @@ CALLBACK
 jmpraw(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
     HRESULT hRes;
-    ULONG64 Offset =0;
+    ULONG64 Offset = 0;
     ULONG RemainderIndex;
     DEBUG_VALUE DebugValue = {};
     INIT_API();
@@ -1252,7 +1271,7 @@ jmpraw(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: Evaluate method evaluates an expression, returning the result.
     */
-    hRes=g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
+    hRes = g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
     if (FAILED(hRes))
     {
         dprintf("[sync] jumpraw: failed to evaluate expression\n");
@@ -1261,7 +1280,7 @@ jmpraw(PDEBUG_CLIENT4 Client, PCSTR Args)
 
     Offset = (ULONG64)DebugValue.I64;
 
-    hRes=TunnelSend("[sync]{\"type\":\"loc\",\"offset\":%llu}\n", Offset);
+    hRes = TunnelSend("[sync]{\"type\":\"loc\",\"offset\":%llu}\n", Offset);
 
     return hRes;
 }
@@ -1272,7 +1291,7 @@ CALLBACK
 modmap(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
     HRESULT hRes;
-    ULONG64 ModBase=0;
+    ULONG64 ModBase = 0;
     ULONG ModSize;
     ULONG RemainderIndex;
 
@@ -1288,7 +1307,7 @@ modmap(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: Evaluate method evaluates an expression, returning the result.
     */
-    hRes=g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
+    hRes = g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
     if (FAILED(hRes))
     {
         dprintf("[sync] modmap: failed to evaluate module base\n");
@@ -1298,7 +1317,7 @@ modmap(PDEBUG_CLIENT4 Client, PCSTR Args)
     ModBase = (ULONG64)DebugValue.I64;
     Args += RemainderIndex;
 
-    hRes=g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT32, &DebugValue, &RemainderIndex);
+    hRes = g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT32, &DebugValue, &RemainderIndex);
     if (FAILED(hRes))
     {
         dprintf("[sync] modmap: failed to evaluate module size\n");
@@ -1318,9 +1337,9 @@ modmap(PDEBUG_CLIENT4 Client, PCSTR Args)
 
     /*
     msdn: The AddSyntheticModule method adds a synthetic module to the module list the debugger
-          maintains for the current process.
+    maintains for the current process.
     */
-    hRes=g_ExtSymbols->AddSyntheticModule(ModBase, ModSize, Args, Args, DEBUG_ADDSYNTHMOD_DEFAULT);
+    hRes = g_ExtSymbols->AddSyntheticModule(ModBase, ModSize, Args, Args, DEBUG_ADDSYNTHMOD_DEFAULT);
     if (FAILED(hRes))
     {
         dprintf("[sync] modmap: AddSyntheticModule failed\n");
@@ -1330,11 +1349,11 @@ modmap(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: The AddSyntheticSymbol method adds a synthetic symbol to a module in the current process.
     */
-    hRes=g_ExtSymbols->AddSyntheticSymbol(ModBase, ModSize, Args, DEBUG_ADDSYNTHSYM_DEFAULT, NULL);
+    hRes = g_ExtSymbols->AddSyntheticSymbol(ModBase, ModSize, Args, DEBUG_ADDSYNTHSYM_DEFAULT, NULL);
     if (FAILED(hRes))
     {
         dprintf("[sync] modmap: AddSyntheticSymbol failed\n");
-        hRes=g_ExtSymbols->RemoveSyntheticModule(ModBase);
+        hRes = g_ExtSymbols->RemoveSyntheticModule(ModBase);
         return E_FAIL;
     }
 
@@ -1347,7 +1366,7 @@ CALLBACK
 modunmap(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
     HRESULT hRes;
-    ULONG64 ModBase=0;
+    ULONG64 ModBase = 0;
     ULONG RemainderIndex;
     DEBUG_VALUE DebugValue = {};
     INIT_API();
@@ -1361,7 +1380,7 @@ modunmap(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: Evaluate method evaluates an expression, returning the result.
     */
-    hRes=g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
+    hRes = g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
     if (FAILED(hRes))
     {
         dprintf("[sync] modunmap: failed to evaluate module base\n");
@@ -1372,9 +1391,9 @@ modunmap(PDEBUG_CLIENT4 Client, PCSTR Args)
 
     /*
     msdn: The RemoveSyntheticModule method removes a synthetic module from the module list
-          the debugger maintains for the current process.
+    the debugger maintains for the current process.
     */
-    hRes=g_ExtSymbols->RemoveSyntheticModule(ModBase);
+    hRes = g_ExtSymbols->RemoveSyntheticModule(ModBase);
     if (FAILED(hRes))
     {
         dprintf("[sync] modunmap: RemoveSyntheticModule failed\n");
@@ -1389,16 +1408,16 @@ HRESULT
 CALLBACK
 bpcmds(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     char *msg, *decoded, *query;
     LPSTR pszString;
     int NbBytesRecvd;
     size_t cbBinary;
     INIT_API();
 
-    #if VERBOSE >= 2
+#if VERBOSE >= 2
     dprintf("[sync] !bpcmds  called\n");
-    #endif
+#endif
 
     if (!g_Synchronized)
     {
@@ -1408,20 +1427,21 @@ bpcmds(PDEBUG_CLIENT4 Client, PCSTR Args)
 
     if (!Args || !*Args){
         msg = "query";
-    } else {
+    }
+    else {
         msg = (char *)Args;
     }
 
-    if ((strncmp("load", msg, 4)==0) || (strncmp("query", msg, 5)==0))
+    if ((strncmp("load", msg, 4) == 0) || (strncmp("query", msg, 5) == 0))
     {
         dprintf("[sync] query idb for bpcmds\n");
-        hRes=TunnelSend("[sync]{\"type\":\"bps_get\"}\n");
+        hRes = TunnelSend("[sync]{\"type\":\"bps_get\"}\n");
     }
-    else if (strncmp("save", msg, 4)==0)
+    else if (strncmp("save", msg, 4) == 0)
     {
         dprintf("[sync] dumping bpcmds to idb\n");
 
-        hRes=LocalCmd(Client, ".bpcmds");
+        hRes = LocalCmd(Client, ".bpcmds");
         if (FAILED(hRes) || FAILED(g_CmdBuffer.hRes))
         {
             dprintf("[sync] failed to evaluate .bpcmds command\n");
@@ -1456,15 +1476,15 @@ bpcmds(PDEBUG_CLIENT4 Client, PCSTR Args)
     }
 
     // Get result from idb client
-    hRes=TunnelReceive(&NbBytesRecvd, &query);
-    if (!(SUCCEEDED(hRes) & (NbBytesRecvd>0) & (query != NULL)))
+    hRes = TunnelReceive(&NbBytesRecvd, &query);
+    if (!(SUCCEEDED(hRes) & (NbBytesRecvd > 0) & (query != NULL)))
     {
         dprintf("[sync] !bpcmds failed\n");
         return hRes;
     }
 
     // Handle result
-    if (strncmp("load", msg, 4)==0)
+    if (strncmp("load", msg, 4) == 0)
     {
         hRes = FromBase64(query, (BYTE **)(&decoded));
         if (SUCCEEDED(hRes)) {
@@ -1472,7 +1492,7 @@ bpcmds(PDEBUG_CLIENT4 Client, PCSTR Args)
             free(decoded);
         }
     }
-    else if (strncmp("query", msg, 4)==0)
+    else if (strncmp("query", msg, 4) == 0)
     {
         hRes = FromBase64(query, (BYTE **)(&decoded));
         if (SUCCEEDED(hRes)) {
@@ -1504,10 +1524,10 @@ modmd5(LPSTR *hexhash)
     DWORD cbRead = 0;
     BOOL bResult = FALSE;
 
-   /*
-    msdn: returns parameters for modules in the target.
-    */
-    hRes=g_ExtSymbols->GetModuleParameters(1, &g_Base, 0, &ModParams);
+    /*
+     msdn: returns parameters for modules in the target.
+     */
+    hRes = g_ExtSymbols->GetModuleParameters(1, &g_Base, 0, &ModParams);
     if (FAILED(hRes))
     {
         dprintf("[sync] modcheck: failed get module parameters\n");
@@ -1515,11 +1535,11 @@ modmd5(LPSTR *hexhash)
     }
 
     dprintf("[sync] modcheck:\n"
-            "       File: %s\n"
-            "       Size: 0x%x\n"
-            "       TimeDateStamp: 0x%x\n", g_NameBuffer, ModParams.Size, ModParams.TimeDateStamp);
+        "       File: %s\n"
+        "       Size: 0x%x\n"
+        "       TimeDateStamp: 0x%x\n", g_NameBuffer, ModParams.Size, ModParams.TimeDateStamp);
 
-    hRes=E_FAIL;
+    hRes = E_FAIL;
 
     hFile = CreateFile(g_NameBuffer, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (hFile == INVALID_HANDLE_VALUE)
@@ -1565,8 +1585,8 @@ modmd5(LPSTR *hexhash)
         goto Exit;
     }
 
-    pbHashData = (BYTE *) malloc(cbHash);
-    if (pbHashData==NULL){
+    pbHashData = (BYTE *)malloc(cbHash);
+    if (pbHashData == NULL){
         dprintf("[sync] failed at allocate buffer: %d\n", GetLastError());
         goto Exit;
     }
@@ -1587,10 +1607,10 @@ Exit:
         free(pbHashData);
     }
     if (hHash){
-       CryptDestroyHash(hHash);
+        CryptDestroyHash(hHash);
     }
     if (hCryptProv){
-       CryptReleaseContext(hCryptProv,0);
+        CryptReleaseContext(hCryptProv, 0);
     }
 
     return hRes;
@@ -1604,10 +1624,10 @@ modcheck(PDEBUG_CLIENT4 Client, PCSTR Args)
     HRESULT hRes;
     DWORD cbBinary;
     int NbBytesRecvd = 0;
-    LPSTR pszResString= NULL;
+    LPSTR pszResString = NULL;
     CHAR *msg = NULL;
     CHAR *type;
-    CHAR cmd[64] = {0};
+    CHAR cmd[64] = { 0 };
     BOOL bUsePdb = TRUE;
 
     INIT_API();
@@ -1626,12 +1646,13 @@ modcheck(PDEBUG_CLIENT4 Client, PCSTR Args)
 
     // check args
     // md5 is accepted only with local debuggee
-    if (!Args || !*Args) {
-        bUsePdb=TRUE;
-    }
-    else if (strcmp("md5", Args)==0)
+    if (!Args || !*Args)
     {
-        bUsePdb=FALSE;
+        bUsePdb = TRUE;
+    }
+    else if (strcmp("md5", Args) == 0)
+    {
+        bUsePdb = FALSE;
 
         if (!(IsLocalDebuggee()))
         {
@@ -1652,17 +1673,17 @@ modcheck(PDEBUG_CLIENT4 Client, PCSTR Args)
     if (bUsePdb)
     {
         type = "pdb";
-        _snprintf_s(cmd, 64, _TRUNCATE , "!itoldyouso  %x", g_Base);
+        _snprintf_s(cmd, 64, _TRUNCATE, "!itoldyouso  %I64x", g_Base);
 
         // return value for command exec
-        hRes=LocalCmd(Client, cmd);
+        hRes = LocalCmd(Client, cmd);
         if (FAILED(hRes) || FAILED(g_CmdBuffer.hRes))
         {
             dprintf("[sync] failed to evaluate !ItoldYouSo  command\n");
             goto Exit;
         }
 
-        cbBinary = (DWORD) g_CmdBuffer.len;
+        cbBinary = (DWORD)g_CmdBuffer.len;
         if (cbBinary == 0)
         {
             dprintf("     ItoldYouSo return empty result\n");
@@ -1671,7 +1692,7 @@ modcheck(PDEBUG_CLIENT4 Client, PCSTR Args)
 
         dprintf("%s\n", g_CmdBuffer.buffer);
 
-        hRes=ToBase64((const byte *)g_CmdBuffer.buffer, cbBinary, &pszResString);
+        hRes = ToBase64((const byte *)g_CmdBuffer.buffer, cbBinary, &pszResString);
         if (FAILED(hRes))
         {
             dprintf("[sync] modcheck ToBase64 failed\n");
@@ -1683,8 +1704,8 @@ modcheck(PDEBUG_CLIENT4 Client, PCSTR Args)
     }
     else
     {
-        type="md5";
-        hRes=modmd5(&pszResString);
+        type = "md5";
+        hRes = modmd5(&pszResString);
         if (FAILED(hRes))
         {
             dprintf("[sync] modcheck modmd5 failed\n");
@@ -1705,14 +1726,14 @@ modcheck(PDEBUG_CLIENT4 Client, PCSTR Args)
     Sleep(150);
 
     // Poll tunnel
-    hRes=TunnelPoll(&NbBytesRecvd, &msg);
+    hRes = TunnelPoll(&NbBytesRecvd, &msg);
     if (FAILED(hRes))
     {
         dprintf("[sync] modcheck poll failed\n");
         goto Exit;
     }
 
-    if ((NbBytesRecvd>0) & (msg != NULL))
+    if ((NbBytesRecvd > 0) & (msg != NULL))
     {
         dprintf("%s\n", msg);
     }
@@ -1741,13 +1762,13 @@ KsParseLine(char *cmd, ULONG ProcType)
 {
     HRESULT hRes;
     int i;
-    int nbArgs = (ProcType==IMAGE_FILE_MACHINE_AMD64) ? 4 : 3;
+    int nbArgs = (ProcType == IMAGE_FILE_MACHINE_AMD64) ? 4 : 3;
     char *childebp, *retaddr, *arg, *callsite = NULL;
 
     // match hex address...
-    if (! (((*cmd >= 0x30) && (*cmd <= 0x39)) || ((*cmd >= 0x61) && (*cmd <= 0x66))))
+    if (!(((*cmd >= 0x30) && (*cmd <= 0x39)) || ((*cmd >= 0x61) && (*cmd <= 0x66))))
     {
-        hRes=g_ExtControl->ControlledOutput(
+        hRes = g_ExtControl->ControlledOutput(
             DEBUG_OUTCTL_AMBIENT_TEXT,
             DEBUG_OUTPUT_NORMAL,
             "%s\n", cmd);
@@ -1756,33 +1777,33 @@ KsParseLine(char *cmd, ULONG ProcType)
 
     childebp = cmd;
 
-    if (FAILED(hRes=NextChunk(childebp, &retaddr)) ||
-        FAILED(hRes=NextChunk(retaddr, &arg)))
+    if (FAILED(hRes = NextChunk(childebp, &retaddr)) ||
+        FAILED(hRes = NextChunk(retaddr, &arg)))
         goto Exit;
 
     // output Child-SP and RetAddr (respectively with 'dc' and '!jmpto' as DML)
-    hRes=g_ExtControl->ControlledOutput(
+    hRes = g_ExtControl->ControlledOutput(
         DEBUG_OUTCTL_AMBIENT_DML,
         DEBUG_OUTPUT_NORMAL,
         "<?dml?><exec cmd=\"dc %s\">%s</exec> <exec cmd=\"!jmpto %s\">%s</exec> ",
-         childebp, childebp, retaddr, retaddr);
+        childebp, childebp, retaddr, retaddr);
 
     if (FAILED(hRes)){
         goto Exit;
     }
 
-    if (ProcType==IMAGE_FILE_MACHINE_AMD64){
+    if (ProcType == IMAGE_FILE_MACHINE_AMD64){
         dprintf(": ");
     }
 
     // output arguments, 4 when x64, 3 when x86 (with 'dc' as DML)
-    for(i=0; i<nbArgs; i++)
+    for (i = 0; i < nbArgs; i++)
     {
-        if (FAILED(hRes=NextChunk(arg, &callsite))){
+        if (FAILED(hRes = NextChunk(arg, &callsite))){
             goto Exit;
         }
 
-        hRes=g_ExtControl->ControlledOutput(
+        hRes = g_ExtControl->ControlledOutput(
             DEBUG_OUTCTL_AMBIENT_DML,
             DEBUG_OUTPUT_NORMAL,
             "<exec cmd=\"dc %s\">%s</exec> ",
@@ -1795,12 +1816,12 @@ KsParseLine(char *cmd, ULONG ProcType)
         arg = callsite;
     }
 
-    if (ProcType==IMAGE_FILE_MACHINE_AMD64){
+    if (ProcType == IMAGE_FILE_MACHINE_AMD64){
         dprintf(": ");
     }
 
     // output Call Site (with '!jmpto' DML as well)
-    hRes=g_ExtControl->ControlledOutput(
+    hRes = g_ExtControl->ControlledOutput(
         DEBUG_OUTCTL_AMBIENT_DML,
         DEBUG_OUTPUT_NORMAL,
         "<exec cmd=\"!jmpto %s\">%s</exec>\n",
@@ -1815,13 +1836,13 @@ HRESULT
 CALLBACK
 ks(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     BOOL bDisableDML = false;
     ULONG ProcType;
     char *cmd, *ptr, *end;
     UNREFERENCED_PARAMETER(Args);
 
-    hRes=LocalCmd(Client, ".prefer_dml");
+    hRes = LocalCmd(Client, ".prefer_dml");
     if (FAILED(hRes) || FAILED(g_CmdBuffer.hRes))
     {
         dprintf("[sync] failed to evaluate .prefer_dml command, %x, %x\n", hRes, g_CmdBuffer.hRes);
@@ -1832,7 +1853,7 @@ ks(PDEBUG_CLIENT4 Client, PCSTR Args)
     if (strcmp(g_CmdBuffer.buffer, "DML versions of commands on by default\n") == 0)
     {
         bDisableDML = true;
-        hRes=LocalCmd(Client, ".prefer_dml 0");
+        hRes = LocalCmd(Client, ".prefer_dml 0");
         if (FAILED(hRes) || FAILED(g_CmdBuffer.hRes))
         {
             dprintf("[sync] failed to evaluate .prefer_dml command, %x, %x\n", hRes, g_CmdBuffer.hRes);
@@ -1843,13 +1864,13 @@ ks(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: returns the effective processor type of the processor of the computer that is running the target.
     */
-    if (FAILED(hRes=g_ExtControl->GetEffectiveProcessorType(&ProcType)))
+    if (FAILED(hRes = g_ExtControl->GetEffectiveProcessorType(&ProcType)))
     {
         dprintf("[sync] failed to get effective processor type\n");
         goto Exit;
     }
 
-    hRes=LocalCmd(Client, "kv");
+    hRes = LocalCmd(Client, "kv");
     if (FAILED(hRes) || FAILED(g_CmdBuffer.hRes) || (g_CmdBuffer.len == 0))
     {
         dprintf("[sync] failed to evaluate ks command, %x, %x\n", hRes, g_CmdBuffer.hRes);
@@ -1863,23 +1884,23 @@ ks(PDEBUG_CLIENT4 Client, PCSTR Args)
     // parse lines
     while (cmd < end)
     {
-        ptr = (char *) strchr(cmd, 0x0A);
+        ptr = (char *)strchr(cmd, 0x0A);
         if (ptr == NULL)
             break;
 
         *ptr = 0;
 
-        if (FAILED(hRes=KsParseLine(cmd, ProcType))){
+        if (FAILED(hRes = KsParseLine(cmd, ProcType))){
             break;
         }
 
-        cmd = ptr+1;
+        cmd = ptr + 1;
     }
 
 Exit:
     // re-enable DML
     if (bDisableDML)
-        hRes=LocalCmd(Client, ".prefer_dml 1");
+        hRes = LocalCmd(Client, ".prefer_dml 1");
 
     g_CmdBuffer.len = 0;
     ZeroMemory(g_CmdBuffer.buffer, MAX_CMD);
@@ -1894,6 +1915,7 @@ translate(PDEBUG_CLIENT4 Client, PCSTR Args)
     HRESULT hRes;
     ULONG64 Base, BaseRemote, Offset;
     ULONG RemainderIndex;
+    ULONG Type;
     DEBUG_VALUE DebugValue = {};
     INIT_API();
 
@@ -1906,7 +1928,7 @@ translate(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: Evaluate method evaluates an expression, returning the result.
     */
-    hRes=g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
+    hRes = g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
     if (FAILED(hRes))
     {
         dprintf("[sync] translate: failed to evaluate expression\n");
@@ -1919,7 +1941,7 @@ translate(PDEBUG_CLIENT4 Client, PCSTR Args)
     /*
     msdn: Evaluate method evaluates an expression, returning the result.
     */
-    hRes=g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
+    hRes = g_ExtControl->Evaluate(Args, DEBUG_VALUE_INT64, &DebugValue, &RemainderIndex);
     if (FAILED(hRes))
     {
         dprintf("[sync] translate: failed to evaluate expression\n");
@@ -1936,7 +1958,7 @@ translate(PDEBUG_CLIENT4 Client, PCSTR Args)
         return E_FAIL;
     }
 
-    hRes=g_ExtSymbols->GetModuleByModuleName(Args, 0, NULL, &Base);
+    hRes = g_ExtSymbols->GetModuleByModuleName(Args, 0, NULL, &Base);
     if (FAILED(hRes))
     {
         dprintf("[sync] translate: failed to find module %s by its name\n", Args);
@@ -1945,7 +1967,18 @@ translate(PDEBUG_CLIENT4 Client, PCSTR Args)
 
     Offset = Offset - BaseRemote + Base;
 
-    hRes=g_ExtControl->ControlledOutput(
+    // properly mask addresses to display if target is x86
+    hRes = g_ExtControl->GetActualProcessorType(&Type);
+    if (SUCCEEDED(hRes))
+    {
+        if (Type == IMAGE_FILE_MACHINE_I386)
+        {
+            Offset &= 0xFFFFFFFF;
+            Base &= 0xFFFFFFFF;
+        }
+    }
+
+    hRes = g_ExtControl->ControlledOutput(
         DEBUG_OUTCTL_AMBIENT_DML,
         DEBUG_OUTPUT_NORMAL,
         "<?dml?>-> module <exec cmd=\"lmDvm%s\">%s</exec>"\
@@ -1966,35 +1999,35 @@ CALLBACK
 synchelp(PDEBUG_CLIENT4 Client, PCSTR Args)
 {
     INIT_API();
-    HRESULT hRes=S_OK;
+    HRESULT hRes = S_OK;
     UNREFERENCED_PARAMETER(Args);
 
     dprintf("[sync] extension commands help:\n"
-            " > !sync <host>                   = synchronize with <host> or the default value\n"
-            " > !syncoff                       = stop synchronization\n"
-            " > !cmt [-a address] <string>     = add comment at current eip (or [addr]) in IDA\n"
-            " > !rcmt [-a address] <string>    = reset comments at current eip (or [addr]) in IDA\n"
-            " > !fcmt [-a address] <string>    = add a function comment for 'f = get_func(eip)' (or [addr]) in IDA\n"
-            " > !lbl [-a address] <string>     = add a label name at current eip (or [addr]) in IDA\n"
-            " > !raddr <expression>            = add a comment with rebased address evaluated from expression\n"
-            " > !rln <expression>              = get symbol from the idb for the given address\n"
-            " > !cmd <string>                  = execute command <string> and add its output as comment at current eip in IDA\n"
-            " > !bc <||on|off|set 0xBBGGRR>    = enable/disable path coloring in IDA\n"
-            "                                    color a single instruction at current eip if called without argument\n"
-            "                                    'set' is used with an hex rgb code (ex: 0xFFFFFF)\n"
-            " > !idblist                       = display list of all IDB clients connected to the dispatcher\n"
-            " > !idbn <n>                      = set active idb to the n_th client. n should be a valid decimal value\n"
-            " > !syncmodauto <on|off>          = enable/disable idb auto switch based on module name\n"
-            " > !jmpto <expression>            = evaluate expression and sync IDA with result address\n"
-            "                                    (switch idb and rebase address if necessary)\n"
-            " > !jmpraw <expression>           = evaluate expression and sync IDA with result address\n"
-            "                                    (use current idb, no idb switch or address rebase)\n"
-            " > !modcheck <||md5>              = check current module pdb info or md5 with respect to idb's input file\n"
-            " > !modmap <base> <size> <name>   = map a synthetic module over memory range specified by base and size params\n"
-            " > !modunmap <base>               = unmap a synthetic module at base address\n"
-            " > !bpcmds <||save|load|>         = .bpcmds wrapper, save and reload .bpcmds output to current idb\n"
-            " > !ks                            = wrapper for kv command using DML\n"
-            " > !translate <base> <addr> <mod> = rebase an address with respect to local module's base\n\n");
+        " > !sync <host>                   = synchronize with <host> or the default value\n"
+        " > !syncoff                       = stop synchronization\n"
+        " > !cmt [-a address] <string>     = add comment at current eip (or [addr]) in IDA\n"
+        " > !rcmt [-a address] <string>    = reset comments at current eip (or [addr]) in IDA\n"
+        " > !fcmt [-a address] <string>    = add a function comment for 'f = get_func(eip)' (or [addr]) in IDA\n"
+        " > !lbl [-a address] <string>     = add a label name at current eip (or [addr]) in IDA\n"
+        " > !raddr <expression>            = add a comment with rebased address evaluated from expression\n"
+        " > !rln <expression>              = get symbol from the idb for the given address\n"
+        " > !cmd <string>                  = execute command <string> and add its output as comment at current eip in IDA\n"
+        " > !bc <||on|off|set 0xBBGGRR>    = enable/disable path coloring in IDA\n"
+        "                                    color a single instruction at current eip if called without argument\n"
+        "                                    'set' is used with an hex rgb code (ex: 0xFFFFFF)\n"
+        " > !idblist                       = display list of all IDB clients connected to the dispatcher\n"
+        " > !idbn <n>                      = set active idb to the n_th client. n should be a valid decimal value\n"
+        " > !syncmodauto <on|off>          = enable/disable idb auto switch based on module name\n"
+        " > !jmpto <expression>            = evaluate expression and sync IDA with result address\n"
+        "                                    (switch idb and rebase address if necessary)\n"
+        " > !jmpraw <expression>           = evaluate expression and sync IDA with result address\n"
+        "                                    (use current idb, no idb switch or address rebase)\n"
+        " > !modcheck <||md5>              = check current module pdb info or md5 with respect to idb's input file\n"
+        " > !modmap <base> <size> <name>   = map a synthetic module over memory range specified by base and size params\n"
+        " > !modunmap <base>               = unmap a synthetic module at base address\n"
+        " > !bpcmds <||save|load|>         = .bpcmds wrapper, save and reload .bpcmds output to current idb\n"
+        " > !ks                            = wrapper for kv command using DML\n"
+        " > !translate <base> <addr> <mod> = rebase an address with respect to local module's base\n\n");
 
     return hRes;
 }

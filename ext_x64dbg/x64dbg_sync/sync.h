@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2012-2014, Quarkslab.
+Copyright (C) 2014-2015, Quarkslab.
 
 This file is part of qb-sync.
 
@@ -17,28 +17,33 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-extern BOOL g_Synchronized;
+#ifndef _PLUGINMAIN_H
+#define _PLUGINMAIN_H
 
-extern void dbgout(char *fmt, ...);
+#include <windows.h>
+#include "pluginsdk\_plugins.h"
 
-extern void dbgoutW(wchar_t* fmt, ...);
 
-HRESULT TunnelIsUp();
+#ifndef DLL_EXPORT
+#define DLL_EXPORT __declspec(dllexport)
+#endif //DLL_EXPORT
 
-HRESULT TunnelCreate(PCSTR Host, PCSTR Port);
+//superglobal variables
+extern int pluginHandle;
+extern HWND hwndDlg;
+extern int hMenu;
 
-HRESULT TunnelClose();
+#ifdef __cplusplus
+extern "C"
+{
+#endif
 
-HRESULT TunnelPoll(int *lpNbBytesRecvd, LPSTR *lpBuffer);
+DLL_EXPORT bool pluginit(PLUG_INITSTRUCT* initStruct);
+DLL_EXPORT bool plugstop();
+DLL_EXPORT void plugsetup(PLUG_SETUPSTRUCT* setupStruct);
 
-HRESULT TunnelReceive(int *lpNbBytesRecvd, LPSTR *lpBuffer);
+#ifdef __cplusplus
+}
+#endif
 
-HRESULT TunnelSend(PCSTR Format, ...);
-
-HRESULT ToBase64(const BYTE *pbBinary, DWORD cbBinary, LPSTR *pszString);
-
-HRESULT FromBase64(LPSTR pszString, BYTE **ppbBinary);
-
-HRESULT WsaErrMsg(int LastError);
-
-HRESULT convert_tow(const char * mbstr,  PTCH *wcstr);
+#endif //_PLUGINMAIN_H

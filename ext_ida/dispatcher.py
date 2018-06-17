@@ -76,6 +76,7 @@ class DispatcherSrv():
         self.opened_socks = []
 
         self.current_dbg = None
+        self.current_dialect = 'unknown'
         self.current_idb = None
         self.current_module = None
 
@@ -90,6 +91,7 @@ class DispatcherSrv():
             'module': self.req_module,
             'sync_mode': self.req_sync_mode,
             'cmd': self.req_cmd,
+            'bc': self.req_bc,
             'kill': self.req_kill
         }
 
@@ -222,7 +224,7 @@ class DispatcherSrv():
         for idbc in self.idb_clients:
             self.announcement(msg, idbc.client_sock)
 
-    # send message to currently active idb client
+    # send dbg message to currently active idb client
     def forward(self, msg, s=None):
         if not s:
             if not self.current_idb:
@@ -231,6 +233,11 @@ class DispatcherSrv():
 
         if s:
             s.sendall(msg + "\n")
+
+    # send dbg message to all idb clients
+    def forward_all(self, msg, s=None):
+        for idbc in self.idb_clients:
+            self.forward(msg, idbc.client_sock)
 
     # disable current idb and enable new idb matched from current module name
     def switch_idb(self, new_idb):
@@ -275,6 +282,9 @@ class DispatcherSrv():
         if self.current_module == name:
             self.switch_idb(new_client)
 
+        # inform new client about debugger's dialect
+        self.dbg_dialect(new_client)
+
     # clean state when a client is quiting
     def client_quit(self, s):
         self.opened_socks.remove(s)
@@ -302,6 +312,21 @@ class DispatcherSrv():
         self.idb_clients.remove(self.current_dbg)
         self.broadcast("new debugger client: %s" % msg)
 
+        # store dbb's dialect
+        if 'dialect' in hash:
+            self.current_dialect = hash['dialect']
+
+        self.dbg_dialect()
+
+    # inform client about debugger's dialect
+    def dbg_dialect(self, client=None):
+        msg = "[sync]{\"type\":\"dialect\",\"dialect\":\"%s\"}\n" % self.current_dialect
+        if client:
+            client.client_sock.sendall(msg)
+        else:
+            for idbc in self.idb_clients:
+                idbc.client_sock.sendall(msg)
+
     # debugger client disconnect from the dispatcher
     def req_dbg_quit(self, s, hash):
         msg = hash['msg']
@@ -315,6 +340,7 @@ class DispatcherSrv():
         self.current_dbg = None
         self.current_module = None
         self.switch_idb(None)
+        self.current_dialect = 'unknown'
 
     # handle kill notice from a client, exit properly if no more client
     def req_kill(self, s, hash):
@@ -379,6 +405,11 @@ class DispatcherSrv():
         mode = hash['auto']
         self.broadcast("sync mode auto set to %s" % mode)
         self.sync_mode_auto = (mode == "on")
+
+    # bc request should be forwarded to all idbs
+    def req_bc(self, s, hash):
+        msg = "[sync]%s" % json.dumps(hash)
+        self.forward_all(msg)
 
     def req_cmd(self, s, hash):
         cmd = hash['cmd']

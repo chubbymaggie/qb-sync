@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2012-2015, Quarkslab.
+Copyright (C) 2014-2015, Quarkslab.
 
 This file is part of qb-sync.
 
@@ -23,16 +23,41 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <wincrypt.h>
 #include <strsafe.h>
 
-#include "sync.h"
 #include "tunnel.h"
 
 #define MAX_SEND 8192
+#define MAX_OUT  1024
 
 static CHAR SendBuffer[MAX_SEND];
 static CHAR RecvBuffer[MAX_SEND];
 BOOL g_Synchronized;
 SOCKET g_Sock = INVALID_SOCKET;
 WSADATA wsaData;
+
+
+void dbgout(char *fmt, ...)
+{
+    char buffer[MAX_OUT] = {0};
+
+    va_list args;
+    va_start(args, fmt);
+    vsprintf_s(buffer, MAX_OUT, fmt, args);
+    OutputDebugStringA(buffer);
+    va_end(args);
+}
+
+
+void dbgoutW(wchar_t* fmt, ...)
+{
+    wchar_t buffer[MAX_OUT] = {0};
+
+    va_list args;
+    va_start(args, fmt);
+    vswprintf_s(buffer, MAX_OUT, fmt, args);
+    OutputDebugStringW(buffer);
+    va_end(args);
+}
+
 
 #if _NT_TARGET_VERSION_WINXPOR2K3
 void
@@ -61,28 +86,28 @@ trimcrlf(LPSTR pszSrcString)
 
 
 HRESULT
-FromBase64(LPCSTR pszString, BYTE **ppbBinary)
+FromBase64(LPSTR pszString, BYTE **ppbBinary)
 {
 	BOOL bRes = FALSE;
     HRESULT hRes = S_OK;
     DWORD cbBinary = 0;
 
-	bRes = CryptStringToBinary(pszString, 0, CRYPT_STRING_BASE64, NULL, &cbBinary, NULL, NULL);
+	bRes = CryptStringToBinaryA(pszString, 0, CRYPT_STRING_BASE64, NULL, &cbBinary, NULL, NULL);
 	if (!bRes){
-        dprintf("[sync] failed at CryptStringToBinaryA: %d\n", GetLastError());
+        dbgout("[sync] failed at CryptStringToBinaryA: %d\n", GetLastError());
         return E_FAIL;
     }
 
     *ppbBinary = (BYTE *) malloc(cbBinary+1);
 
     if (ppbBinary==NULL){
-        dprintf("[sync] failed at allocate buffer: %d\n", GetLastError());
+        dbgout("[sync] failed at allocate buffer: %d\n", GetLastError());
         return E_FAIL;
     }
 
 	bRes = CryptStringToBinaryA(pszString, 0, CRYPT_STRING_BASE64, *ppbBinary, &cbBinary, NULL, NULL);
 	if (!bRes){
-        dprintf("[sync] failed at CryptStringToBinaryA: %d\n", GetLastError());
+        dbgout("[sync] send failed at CryptStringToBinaryA: %d\n", GetLastError());
         return E_FAIL;
     }
 
@@ -92,34 +117,30 @@ FromBase64(LPCSTR pszString, BYTE **ppbBinary)
 }
 
 
+
 HRESULT
-ToStringEnc(DWORD dwFlags, const BYTE *pbBinary, DWORD cbBinary, LPSTR *pszString)
+ToBase64(const BYTE *pbBinary, DWORD cbBinary, LPSTR *pszString)
 {
-	BOOL bRes = FALSE;
+	BOOL bRes=FALSE;
     HRESULT hRes=S_OK;
     DWORD cchString = 0;
 
-	bRes = CryptBinaryToStringA(pbBinary, cbBinary, dwFlags, NULL, &cchString);
+	bRes = CryptBinaryToStringA(pbBinary, cbBinary, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, NULL, &cchString);
 	if (!bRes){
-        dprintf("[sync] send failed at CryptBinaryToString: %d\n", GetLastError());
+        dbgout("[sync] send failed at CryptBinaryToString: %d\n", GetLastError());
         return E_FAIL;
     }
 
     *pszString = (LPSTR) malloc(cchString);
 
-    if (*pszString==NULL){
-        dprintf("[sync] failed at allocate buffer: %d\n", GetLastError());
+    if (pszString==NULL){
+        dbgout("[sync] failed at allocate buffer: %d\n", GetLastError());
         return E_FAIL;
     }
 
-	bRes = CryptBinaryToStringA(pbBinary, cbBinary, dwFlags, *pszString, &cchString);
+	bRes = CryptBinaryToStringA(pbBinary, cbBinary, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, *pszString, &cchString);
 	if (!bRes){
-        dprintf("[sync] failed at CryptBinaryToString: %d\n", GetLastError());
-        if (*pszString)
-        {
-            free(*pszString);
-            *pszString = NULL;
-        }
+        dbgout("[sync] send failed at CryptBinaryToString: %d\n", GetLastError());
         return E_FAIL;
     }
 
@@ -136,54 +157,13 @@ ToStringEnc(DWORD dwFlags, const BYTE *pbBinary, DWORD cbBinary, LPSTR *pszStrin
 }
 
 
-HRESULT
-ToBase64(const BYTE *pbBinary, DWORD cbBinary, LPSTR *pszString)
-{
-    HRESULT hRes;
-
-    hRes = ToStringEnc(CRYPT_STRING_BASE64|CRYPT_STRING_NOCRLF, pbBinary, cbBinary, pszString);
-    return hRes;
-}
-
-
-HRESULT
-ToHexString(const BYTE *pbBinary, DWORD cbBinary, LPSTR *pszString)
-{
-    HRESULT hRes;
-
-    hRes = ToStringEnc(CRYPT_STRING_HEX|CRYPT_STRING_NOCRLF, pbBinary, cbBinary, pszString);
-    return hRes;
-}
-
-
-HRESULT
-NextChunk(char *cmd, char **nextc)
-{
-    char *tmp;
-
-    tmp = strchr(cmd, 0x20);
-    if (tmp == NULL)
-        return E_FAIL;
-
-    *tmp = 0;
-    *nextc = tmp+1;
-
-    if (**nextc == 0x3a){
-        NextChunk(*nextc, nextc);
-    }
-
-    return S_OK;
-}
-
-
 // return S_OK if socket is created and synchronized
 HRESULT TunnelIsUp()
 {
     HRESULT hRes=S_OK;
 
-    if ((g_Sock==INVALID_SOCKET) | (!g_Synchronized)){
+    if( (g_Sock==INVALID_SOCKET) | (!g_Synchronized))
         hRes = E_FAIL;
-    }
 
     return hRes;
 }
@@ -199,13 +179,13 @@ TunnelCreate(PCSTR Host, PCSTR Port)
     BOOL bOptVal = FALSE;
 
     if (FAILED(hRes = WSAStartup(MAKEWORD(2,2), &wsaData))) {
-        dprintf("[sync] WSAStartup failed with error %d\n", hRes);
+        dbgout("[sync] WSAStartup failed with error %d\n", hRes);
         goto err_clean;
     }
 
     if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2 )
     {
-        dprintf("[sync] WSAStartup failed, Winsock version not supported\n");
+        dbgout("[sync] WSAStartup failed, Winsock version not supported\n");
         hRes = E_FAIL;
         goto err_clean;
     }
@@ -218,13 +198,13 @@ TunnelCreate(PCSTR Host, PCSTR Port)
     // Resolve the server address and port
     iResult = getaddrinfo(Host, Port, &hints, &result);
     if ( iResult != 0 ) {
-        dprintf("[sync] getaddrinfo failed with error: %d\n", iResult);
+        dbgout("[sync] getaddrinfo failed with error: %d\n", iResult);
         hRes = E_FAIL;
         goto err_clean;
     }
 
     #if VERBOSE >= 2
-    dprintf("[sync] getaddrinfo ok\n");
+    dbgout("[sync] getaddrinfo ok\n");
     #endif
 
     // Attempt to connect to an address until one succeeds
@@ -233,47 +213,46 @@ TunnelCreate(PCSTR Host, PCSTR Port)
         // Create a SOCKET for connecting to server
         g_Sock = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
         if (g_Sock == INVALID_SOCKET) {
-            dprintf("[sync] socket failed with error: %ld\n", WSAGetLastError());
+            dbgout("[sync] socket failed with error: %ld\n", WSAGetLastError());
             hRes = E_FAIL;
             goto err_clean;
         }
 
         #if VERBOSE >= 2
-        dprintf("[sync] socket ok\n");
+        dbgout("[sync] socket ok\n");
         #endif
 
         bOptVal = TRUE;
         iResult = setsockopt(g_Sock, SOL_SOCKET, SO_KEEPALIVE, (char *) &bOptVal, bOptLen);
         if (iResult == SOCKET_ERROR)
         {
-            dprintf("[sync] setsockopt for SO_KEEPALIVE failed with error: %u\n", WSAGetLastError());
+            dbgout("[sync] setsockopt for SO_KEEPALIVE failed with error: %u\n", WSAGetLastError());
         }
 
         #if VERBOSE >= 2
-        dprintf("[sync] Set SO_KEEPALIVE: ON\n");
+        dbgout("[sync] Set SO_KEEPALIVE: ON\n");
         #endif
 
         iResult = setsockopt(g_Sock, IPPROTO_TCP, TCP_NODELAY, (char *) &bOptVal, bOptLen);
         if (iResult == SOCKET_ERROR)
         {
-            dprintf("[sync] setsockopt for IPPROTO_TCP failed with error: %u\n", WSAGetLastError());
+            dbgout("[sync] setsockopt for IPPROTO_TCP failed with error: %u\n", WSAGetLastError());
         }
 
         #if VERBOSE >= 2
-        dprintf("[sync] Set TCP_NODELAY: ON\n");
+        dbgout("[sync] Set TCP_NODELAY: ON\n");
         #endif
 
         // Connect to server.
         iResult = connect(g_Sock, ptr->ai_addr, (int)ptr->ai_addrlen);
-        if (iResult == SOCKET_ERROR)
-        {
+        if (iResult == SOCKET_ERROR) {
             closesocket(g_Sock);
             g_Sock = INVALID_SOCKET;
-            dprintf("[sync] connect failed (check if broker is running)\n");
+            dbgout("[sync] connect failed (check if broker is running)\n");
             continue;
         }
 
-        dprintf("[sync] sync success, sock 0x%x\n", g_Sock);
+        dbgout("[sync] sync success, sock 0x%x\n", g_Sock);
         break;
     }
 
@@ -297,12 +276,11 @@ HRESULT TunnelClose()
     HRESULT hRes=S_OK;
     int iResult;
 
-    if (SUCCEEDED(TunnelIsUp()))
+    if(SUCCEEDED(TunnelIsUp()))
     {
         hRes=TunnelSend("[notice]{\"type\":\"dbg_quit\",\"msg\":\"dbg disconnected\"}\n");
-        if (FAILED(hRes)){
+        if(FAILED(hRes))
             return hRes;
-        }
     }
 
     if (!(g_Sock == INVALID_SOCKET))
@@ -311,11 +289,11 @@ HRESULT TunnelClose()
         g_Sock = INVALID_SOCKET;
 
         if (iResult == SOCKET_ERROR){
-            dprintf("[sync] closesocket failed with error %d\n", WSAGetLastError());
+            dbgout("[sync] closesocket failed with error %d\n", WSAGetLastError());
         }
     }
 
-    dprintf("[sync] sync is off\n");
+    dbgout("[sync] sync is off\n");
     g_Synchronized = FALSE;
     WSACleanup();
     return hRes;
@@ -342,15 +320,14 @@ HRESULT TunnelPoll(int *lpNbBytesRecvd, LPSTR *lpBuffer)
 
     iMode = 0;
     iResult = ioctlsocket(g_Sock, FIONBIO, &iMode);
-
     if (iResult != NO_ERROR)
     {
         printf("[sync] TunnelPoll ioctlsocket failed with error: %ld\n", iResult);
         return E_FAIL;
     }
+
     return hRes;
 }
-
 
 HRESULT TunnelReceive(int *lpNbBytesRecvd, LPSTR *lpBuffer)
 {
@@ -359,9 +336,9 @@ HRESULT TunnelReceive(int *lpNbBytesRecvd, LPSTR *lpBuffer)
     errno_t err;
     *lpNbBytesRecvd = 0;
 
-    if (FAILED(hRes=TunnelIsUp()))
+    if(FAILED(hRes=TunnelIsUp()))
     {
-        dprintf("[sync] TunnelReceive: tunnel is not available\n");
+        dbgout("[sync] TunnelReceive: tunnel is not available\n");
         return hRes;
     }
 
@@ -375,25 +352,25 @@ HRESULT TunnelReceive(int *lpNbBytesRecvd, LPSTR *lpBuffer)
         }
         else
         {
-            dprintf("[sync] recv failed with error: %d, 0x%x\n", iResult, g_Sock);
+            dbgout("[sync] recv failed with error: %d, 0x%x\n", iResult, g_Sock);
             WsaErrMsg(iResult);
             goto error_close;
         }
     }
     else if ( iResult == 0 ) {
-        dprintf("[sync] recv: connection closed\n");
+        dbgout("[sync] recv: connection closed\n");
         goto error_close;
     }
 
     *lpBuffer = (LPSTR) calloc(iResult+1, sizeof(CHAR));
     if (lpBuffer == NULL) {
-        dprintf("[sync] failed at allocate buffer: %d\n", GetLastError());
+        dbgout("[sync] failed at allocate buffer: %d\n", GetLastError());
         return E_FAIL;
     }
 
     err = memcpy_s(*lpBuffer, iResult+1, RecvBuffer, iResult);
     if (err) {
-        dprintf("[sync] memcpy_s failed to copy received buffer\n");
+        dbgout("[sync] memcpy_s failed to copy received buffer\n");
         free(*lpBuffer);
         *lpBuffer = NULL;
         hRes = E_FAIL;
@@ -417,29 +394,28 @@ HRESULT TunnelSend(PCSTR Format, ...)
     int iResult;
     size_t cbRemaining;
 
-    if (FAILED(hRes=TunnelIsUp()))
+    if(FAILED(hRes=TunnelIsUp()))
     {
-        dprintf("[sync] TunnelSend: tunnel is unavailable\n");
+        dbgout("[sync] TunnelSend: tunnel is unavailable\n");
         return hRes;
     }
 
     va_start(Args, Format);
-    hRes = StringCbVPrintfEx(SendBuffer, MAX_SEND, NULL, &cbRemaining, STRSAFE_NULL_ON_FAILURE, Format, Args);
+    hRes = StringCbVPrintfExA(SendBuffer, MAX_SEND, NULL, &cbRemaining, STRSAFE_NULL_ON_FAILURE, Format, Args);
     va_end(Args);
 
-    if (FAILED(hRes)){
+    if (FAILED(hRes))
         return hRes;
-    }
 
     #if VERBOSE >= 2
-    dprintf("[sync] send 0x%x bytes, %s\n", MAX_SEND-cbRemaining, SendBuffer);
+    dbgout("[sync] send 0x%x bytes, %s\n", MAX_SEND-cbRemaining, SendBuffer);
     #endif
 
     iResult = send(g_Sock, (const char *)SendBuffer, MAX_SEND-((unsigned int)cbRemaining), 0);
-    if (iResult == SOCKET_ERROR)
+    if(iResult == SOCKET_ERROR)
     {
         iResult = WSAGetLastError();
-        dprintf("[sync] send failed with error %d, 0x%x\n", iResult, g_Sock);
+        dbgout("[sync] send failed with error %d, 0x%x\n", iResult, g_Sock);
         WsaErrMsg(iResult);
         g_Synchronized = FALSE;
         TunnelClose();
@@ -449,20 +425,19 @@ HRESULT TunnelSend(PCSTR Format, ...)
     return hRes;
 }
 
-
 HRESULT WsaErrMsg(int LastError)
 {
     HRESULT hRes=S_OK;
 
     switch(LastError){
         case WSAECONNRESET:
-            dprintf("        -> Connection reset by peer\n");
+            dbgout("        -> Connection reset by peer\n");
             break;
         case WSAENOTCONN:
-            dprintf("        -> Socket is not connected\n");
+            dbgout("        -> Socket is not connected\n");
             break;
         case WSAECONNABORTED:
-            dprintf("        -> Software caused connection abort\n");
+            dbgout("        -> Software caused connection abort\n");
             break;
         default:
             break;
